@@ -66,7 +66,7 @@ def transfer_style_img(
         content_img,
         style_img,
         device,
-        alpha
+        alpha=1.0
 ):
     """
     Performs style transfer of provided images
