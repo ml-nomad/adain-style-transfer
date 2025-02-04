@@ -62,6 +62,18 @@ python -m train.py -m --num-epochs <количество эпох> \
 Так же авторы в коде указали использование лямбда коэффициента лосса стиля 0.01
 Такой коэффициент в данной реализаци приводил к очень незначительному изменению стиля, поэтому был увеличен до 1.0
 ## Результаты
+Примеры некоторых стилизаций
+<div align="center">
+  <img src="test_data/brad_pitt.jpg" width="250" alt="Conten 1">
+  <img src="test_data/vg.jpg" width="250" alt="Style 1">
+  <img src="demo/brad_pitt_van_gogh.jpg" width="250" alt="Result">
+</div>
+<div align="center">
+  <img src="test_data/sketch.png" width="250" alt="Conten 2">
+  <img src="test_data/ashville_cropped.jpg" width="250" alt="Style 2">
+  <img src="demo/sketch_ashville.jpg" width="250" alt="Result">
+</div>
+Видео демонстрация [здесь](demo/demo.mp4)
 ## Возможные дальнейшие улучшения
 1. Попробовать использовать нормализованный vgg19
 2. Перейти в тренировочном процессе от эпох к итерациям, как в изначальной статье
