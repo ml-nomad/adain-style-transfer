@@ -25,6 +25,8 @@ def parse_args():
                         help='content images directory (default: training_data/content)')
     parser.add_argument('--style-dir', type=str, default='training_data/style',
                         help='style images directory (default: training_data/style)')
+    parser.add_argument('--resume', action='store_true',
+                        help='resume training from latest checkpoint')
 
     return parser.parse_args()
 
@@ -32,9 +34,20 @@ if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
 
-    timestamp = datetime.now().strftime('%m%d_%H%M')
-    prefix = ''.join(random.choices(string.ascii_lowercase, k=6))
-    training_prefix = f"{timestamp}_{prefix}"
+    # If resuming, don't generate new prefix
+    training_prefix = None
+
+    resume_training = not args.resume
+
+    if resume_training:
+        # Find the latest training prefix from existing files
+        existing_files = [f for f in os.listdir(args.checkpoints_dir) if f.endswith('.pth')]
+        if existing_files:
+            training_prefix = existing_files[0].split('_checkpoint')[0]
+    else:
+        timestamp = datetime.now().strftime('%m%d_%H%M')
+        prefix = ''.join(random.choices(string.ascii_lowercase, k=6))
+        training_prefix = f"{timestamp}_{prefix}"
 
     os.makedirs(args.checkpoints_dir, exist_ok=True)
 
@@ -47,7 +60,8 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         base_lr=args.base_lr,
         style_loss_coeff=args.style_loss_coeff,
-        log_interval=100
+        log_interval=100,
+        resume_training=resume_training
     )
 
     complete_model_path = os.path.join(args.checkpoints_dir, f'{training_prefix}_complete_adain_model.pth')

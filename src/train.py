@@ -13,7 +13,7 @@ from src.style_transfer_loss import StyleTransferLoss
 
 def setup_logging(save_dir, prefix):
     """Setup logging configuration"""
-    log_file = os.path.join(save_dir, f'training_{prefix}.log')
+    log_file = os.path.join(save_dir, f'{prefix}_training_log.log')
 
     # Create formatter
     formatter = logging.Formatter(
@@ -113,6 +113,51 @@ def should_stop_training(stats, patience=5, min_improvement=0.0001, window_size=
     return False, ""
 
 
+def save_checkpoint(model, optimizer, scheduler, stats, save_dir, training_prefix, epoch):
+    """
+    Save a checkpoint of the model and training state.
+    Uses a single file per epoch that gets updated throughout the epoch.
+
+    Args:
+        model: The model to save
+        optimizer: The optimizer state
+        scheduler: The learning rate scheduler state
+        stats: Training statistics
+        save_dir: Directory to save checkpoints
+        training_prefix: Prefix for checkpoint filenames
+        epoch: Current epoch number
+        batch_idx: Current batch index
+    """
+    # Create checkpoint filename for this epoch
+    checkpoint_path = os.path.join(save_dir, f'{training_prefix}_checkpoint_epoch{epoch + 1}.pth')
+
+    checkpoint = {
+        'epoch': epoch,
+        'decoder': model.decoder.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'stats': stats
+    }
+
+    torch.save(checkpoint, checkpoint_path)
+
+
+def find_latest_checkpoint(save_dir, training_prefix):
+    """
+    Find the latest checkpoint in the save directory using file modification time
+    Returns checkpoint path, epoch number, and batch index
+    """
+    checkpoint_files = [f for f in os.listdir(save_dir) if f.startswith(training_prefix) and f.endswith('.pth')]
+
+    if not checkpoint_files:
+        return None, -1, -1
+
+    # Get the latest file by modification time
+    latest_file = max(checkpoint_files, key=lambda f: os.path.getmtime(os.path.join(save_dir, f)))
+    latest_path = os.path.join(save_dir, latest_file)
+
+    return latest_path
+
 def train_model(
         content_dir,
         style_dir,
@@ -122,7 +167,8 @@ def train_model(
         batch_size,
         base_lr,
         style_loss_coeff,
-        log_interval
+        log_interval,
+        resume_training=False
 ):
     device = get_device()
 
@@ -133,13 +179,6 @@ def train_model(
     # Setup logging
     stats_file = os.path.join(save_dir, f'{training_prefix}_training_stats.json')
     logger = setup_logging(save_dir, training_prefix)
-
-    # Log training setup
-    logger.info(f"Starting training for {num_epochs} epochs, batch size: {batch_size}, style loss coeff: {style_loss_coeff}")
-    content_file_num = count_jpegs(content_dir)
-    style_file_num = count_jpegs(style_dir)
-    logger.info(f"Content images: {content_file_num}, Style images: {style_file_num}")
-    logger.info(f"Initial learning rate: {base_lr}")
 
     # Training monitor setup
     monitor = TrainingMonitor(
@@ -165,6 +204,8 @@ def train_model(
     )
 
     # Training stats setup
+    start_epoch = 0
+
     stats = {
         'epoch_times': [],
         'total_loss': [],
@@ -174,7 +215,34 @@ def train_model(
         'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
-    for epoch in range(num_epochs):
+    if resume_training:
+        latest_checkpoint_path = find_latest_checkpoint(save_dir, training_prefix)
+        if latest_checkpoint_path:
+            print(f"Resuming from checkpoint: {latest_checkpoint_path}")
+            checkpoint = torch.load(latest_checkpoint_path)
+
+            # Load model, optimizer and scheduler states
+            model.decoder.load_state_dict(checkpoint['decoder'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            scheduler.load_state_dict(checkpoint['scheduler'])
+
+            # Load training stats
+            stats = checkpoint['stats']
+            start_epoch = checkpoint.get('epoch', 0) + 1
+
+
+            print(f"Resuming from epoch {start_epoch}")
+        else:
+            print("No checkpoint found, starting from scratch")
+
+    logger.info(f"{'Resuming' if resume_training else 'Starting'} training at epoch {start_epoch + 1}")
+    logger.info(f"Training parameters: epochs={num_epochs}, batch_size={batch_size}, style_loss_coeff={style_loss_coeff}")
+    content_file_num = count_jpegs(content_dir)
+    style_file_num = count_jpegs(style_dir)
+    logger.info(f"Content images: {content_file_num}, Style images: {style_file_num}")
+    logger.info(f"Current learning rate: {optimizer.param_groups[0]['lr']}")
+
+    for epoch in range(start_epoch, num_epochs):
 
         epoch_start = time.time()
         model.train()
@@ -231,19 +299,15 @@ def train_model(
         scheduler.step(avg_loss)
 
         # Save checkpoint
-        checkpoint_path = os.path.join(save_dir, f'{training_prefix}_checkpoint_epoch{epoch + 1}.pth')
-        torch.save({
-            'epoch': epoch + 1,
-            'encoder': model.encoder.state_dict(),
-            'decoder': model.decoder.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-            'loss': avg_loss,
-            'content_loss': avg_content,
-            'style_loss': avg_style,
-            'stats': stats  # Save current training stats
-        }, checkpoint_path)
-        logger.info(f"Saved checkpoint to {checkpoint_path}")
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            stats=stats,
+            save_dir=save_dir,
+            training_prefix=training_prefix,
+            epoch=epoch,
+        )
 
         # Record stats
         stats['epoch_times'].append(epoch_time)
@@ -265,13 +329,11 @@ def train_model(
             print(f"Early stopping triggered: {reason}")
             break
 
-    # After training completion
-    logger.info(f"Training completed. Final LR: {optimizer.param_groups[0]['lr']}")
-
     # Save final stats
     stats['end_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     save_training_stats(stats, stats_file)
     logger.info(f"Training statistics saved to {stats_file}")
+    logger.info(f"Training completed. Final LR: {optimizer.param_groups[0]['lr']}")
 
     return model
 
