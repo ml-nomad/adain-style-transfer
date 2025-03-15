@@ -9,9 +9,9 @@ def parse_args():
     # Add command line arguments with current values as defaults
     parser.add_argument('--content-path', type=str, default='test_data/brad_pitt.jpg',
                         help='path to content image')
-    parser.add_argument('--style-path', type=str, default='test_data/sketch.png',
+    parser.add_argument('--style-path', type=str, default='test_data/vg.jpg',
                         help='path to style image')
-    parser.add_argument('--model', type=str, default='model/model.pth',
+    parser.add_argument('--model', type=str, default='checkpoints/0206_0223_cfctqm_complete_adain_model.pth',
                         help='path to model file')
     parser.add_argument('--alpha', type=float, default=1.0,
                         help='style interpolation value (default: 1.0)')

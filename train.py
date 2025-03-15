@@ -11,19 +11,19 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train AdaIN style transfer model')
 
     # Add all hyperparameters as command line arguments
-    parser.add_argument('--num-epochs', type=int, default=20,
+    parser.add_argument('--num-epochs', type=int, default=160000,
                         help='number of training epochs (default: 20)')
     parser.add_argument('--batch-size', type=int, default=8,
                         help='training batch size (default: 8)')
-    parser.add_argument('--base-lr', type=float, default=1e-3,
-                        help='base learning rate (default: 0.001)')
-    parser.add_argument('--style-loss-coeff', type=float, default=1.0,
+    parser.add_argument('--base-lr', type=float, default=3e-4,
+                        help='base learning rate (default: 0.0004)')
+    parser.add_argument('--style-loss-coeff', type=float, default=0.1,
                         help='style loss coefficient (default: 1.0)')
     parser.add_argument('--checkpoints-dir', type=str, default='checkpoints',
                         help='directory to save checkpoints (default: checkpoints)')
-    parser.add_argument('--content-dir', type=str, default='training_data/content',
+    parser.add_argument('--content-dir', type=str, default='training_data/content20k_resized',
                         help='content images directory (default: training_data/content)')
-    parser.add_argument('--style-dir', type=str, default='training_data/style',
+    parser.add_argument('--style-dir', type=str, default='training_data/style20k_resized',
                         help='style images directory (default: training_data/style)')
     parser.add_argument('--resume', action='store_true',
                         help='resume training from latest checkpoint')
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     # If resuming, don't generate new prefix
     training_prefix = None
 
-    resume_training = not args.resume
+    resume_training = args.resume
 
     if resume_training:
         # Find the latest training prefix from existing files
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         style_dir=args.style_dir,
         save_dir=args.checkpoints_dir,
         training_prefix=training_prefix,
-        num_epochs=args.num_epochs,
+        num_iterations=args.num_epochs,
         batch_size=args.batch_size,
         base_lr=args.base_lr,
         style_loss_coeff=args.style_loss_coeff,

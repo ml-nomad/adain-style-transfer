@@ -2,8 +2,7 @@ import os
 import torch
 from torchvision import transforms
 from PIL import Image
-from torch.utils.data import Dataset
-
+from torch.utils.data import Dataset, DataLoader
 
 class StyleContentDataset(Dataset):
     """
@@ -78,3 +77,17 @@ class StyleContentDataset(Dataset):
         assert not torch.isnan(style_img).any(), f"NaN in style image: {style_path}"
 
         return content_img, style_img
+
+def create_dataloaders(content_dir, style_dir, batch_size):
+    dataset = StyleContentDataset(content_dir, style_dir)
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,  # for MPS compatibility
+        pin_memory=True,
+        persistent_workers=False,  # for MPS compatibility
+        drop_last=True
+    )
+

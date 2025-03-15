@@ -97,9 +97,9 @@ class ImageProcessor:
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Resize images to 512px on smallest dimension')
-    parser.add_argument('source', type=str, help='Source folder containing JPG images', default='../content/style1000')
+    parser.add_argument('source', type=str, help='Source folder containing JPG images', default='/Users/stan/Downloads/train2014_coco_content')
     parser.add_argument('destination', type=str, help='Destination folder for processed images',
-                        default='../content/style1000resized')
+                        default='../content/coco2014resized/')
     return parser.parse_args()
 
 

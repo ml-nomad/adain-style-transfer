@@ -56,7 +56,7 @@ def save_training_stats(stats, stats_file):
         json.dump(serializable_stats, f, indent=4)
 
 
-def should_stop_training(stats, patience=5, min_improvement=0.0001, window_size=5, lookback_windows=10):
+def should_stop_training(stats, patience=5, min_improvement=0.0001, window_size=20, lookback_windows=10):
     """
     Determine if training should be stopped based on recent loss statistics.
 
@@ -113,35 +113,6 @@ def should_stop_training(stats, patience=5, min_improvement=0.0001, window_size=
     return False, ""
 
 
-def save_checkpoint(model, optimizer, scheduler, stats, save_dir, training_prefix, epoch):
-    """
-    Save a checkpoint of the model and training state.
-    Uses a single file per epoch that gets updated throughout the epoch.
-
-    Args:
-        model: The model to save
-        optimizer: The optimizer state
-        scheduler: The learning rate scheduler state
-        stats: Training statistics
-        save_dir: Directory to save checkpoints
-        training_prefix: Prefix for checkpoint filenames
-        epoch: Current epoch number
-        batch_idx: Current batch index
-    """
-    # Create checkpoint filename for this epoch
-    checkpoint_path = os.path.join(save_dir, f'{training_prefix}_checkpoint_epoch{epoch + 1}.pth')
-
-    checkpoint = {
-        'epoch': epoch,
-        'decoder': model.decoder.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'scheduler': scheduler.state_dict(),
-        'stats': stats
-    }
-
-    torch.save(checkpoint, checkpoint_path)
-
-
 def find_latest_checkpoint(save_dir, training_prefix):
     """
     Find the latest checkpoint in the save directory using file modification time
@@ -163,7 +134,7 @@ def train_model(
         style_dir,
         save_dir,
         training_prefix,
-        num_epochs,
+        num_iterations,
         batch_size,
         base_lr,
         style_loss_coeff,
@@ -198,20 +169,19 @@ def train_model(
         optimizer,
         mode='min',
         factor=0.8,
-        patience=3,
-        min_lr=1e-5,
-        cooldown=1
+        patience=5,
+        min_lr=5e-6,
+        cooldown=2
     )
 
     # Training stats setup
-    start_epoch = 0
-
+    start_iter = 0
     stats = {
-        'epoch_times': [],
         'total_loss': [],
         'content_loss': [],
         'style_loss': [],
         'learning_rates': [],
+        'times': [],
         'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
@@ -221,121 +191,133 @@ def train_model(
             print(f"Resuming from checkpoint: {latest_checkpoint_path}")
             checkpoint = torch.load(latest_checkpoint_path)
 
-            # Load model, optimizer and scheduler states
             model.decoder.load_state_dict(checkpoint['decoder'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
-
-            # Load training stats
             stats = checkpoint['stats']
-            start_epoch = checkpoint.get('epoch', 0) + 1
-
-
-            print(f"Resuming from epoch {start_epoch}")
+            start_iter = checkpoint.get('iteration', 0)
+            print(f"Resuming from iteration {start_iter}")
         else:
             print("No checkpoint found, starting from scratch")
 
-    logger.info(f"{'Resuming' if resume_training else 'Starting'} training at epoch {start_epoch + 1}")
-    logger.info(f"Training parameters: epochs={num_epochs}, batch_size={batch_size}, style_loss_coeff={style_loss_coeff}")
+    logger.info(f"{'Resuming' if resume_training else 'Starting'} training at iteration {start_iter}")
+    logger.info(f"Training parameters: iterations={num_iterations}, batch_size={batch_size}")
     content_file_num = count_jpegs(content_dir)
     style_file_num = count_jpegs(style_dir)
     logger.info(f"Content images: {content_file_num}, Style images: {style_file_num}")
     logger.info(f"Current learning rate: {optimizer.param_groups[0]['lr']}")
 
-    for epoch in range(start_epoch, num_epochs):
+    data_iterator = iter(train_loader)
+    iteration_start_time = time.time()
+    current_iter = start_iter
 
-        epoch_start = time.time()
-        model.train()
+    running_loss = running_content = running_style = 0.0
 
-        running_loss = running_content = running_style = 0.0
+    while current_iter < num_iterations:
+        try:
+            batch = next(data_iterator)
+        except StopIteration:
+            data_iterator = iter(train_loader)
+            batch = next(data_iterator)
 
-        for batch_idx, (content, style) in enumerate(train_loader):
-            content = content.to(device)
-            style = style.to(device)
+        content, style = batch
 
-            # Regular forward pass
-            generated, adain = model(content, style)
+        content = content.to(device)
+        style = style.to(device)
 
-            total_loss, content_loss, style_loss = loss_fn(
-                generated,
-                adain,
-                style
-            )
+        # Regular forward pass
+        generated, adain = model(content, style)
 
-            optimizer.zero_grad()
-            total_loss.backward()
-
-            optimizer.step()
-
-            # Update statistics
-            running_loss += total_loss.item()
-            running_content += content_loss.item()
-            running_style += style_loss.item()
-
-            # Log progress
-            if batch_idx % log_interval == 0:
-                avg_loss = running_loss / (batch_idx + 1)
-                avg_content = running_content / (batch_idx + 1)
-                avg_style = running_style / (batch_idx + 1)
-
-                log_msg = (f"Epoch {epoch + 1}/{num_epochs} | Batch {batch_idx}"
-                           f" | Loss: {avg_loss:.4f} [C: {avg_content:.4f}, S: {avg_style:.4f}]")
-                logger.info(log_msg)
-
-            monitor.generate_sample(
-                model=model,
-                device=device,
-                epoch=epoch,
-                current_iteration=batch_idx
-            )
-
-        # Epoch statistics
-        epoch_time = time.time() - epoch_start
-        avg_loss = running_loss / len(train_loader)
-        avg_content = running_content / len(train_loader)
-        avg_style = running_style / len(train_loader)
-        current_lr = optimizer.param_groups[0]['lr']
-
-        scheduler.step(avg_loss)
-
-        # Save checkpoint
-        save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            stats=stats,
-            save_dir=save_dir,
-            training_prefix=training_prefix,
-            epoch=epoch,
+        total_loss, content_loss, style_loss = loss_fn(
+            generated,
+            adain,
+            style
         )
 
-        # Record stats
-        stats['epoch_times'].append(epoch_time)
-        stats['total_loss'].append(avg_loss)
-        stats['content_loss'].append(avg_content)
-        stats['style_loss'].append(avg_style)
-        stats['learning_rates'].append(current_lr)
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
 
-        save_training_stats(stats, stats_file)
-        logger.info(f"Training statistics saved to {stats_file}")
+        # Update statistics
+        running_loss += total_loss.item()
+        running_content += content_loss.item()
+        running_style += style_loss.item()
 
-        # Log epoch summary
-        log_msg = (f"Epoch {epoch + 1} completed in {epoch_time:.1f}s | "
-                   f"Avg Loss: {stats['total_loss'][-1]:.4f} [C: {stats['content_loss'][-1]:.4f}, S: {stats['style_loss'][-1]:.4f}, LR: {current_lr:.6f}]")
-        logger.info(log_msg)
+        if current_iter > 0 and current_iter % log_interval == 0:
+            iteration_time = time.time() - iteration_start_time
+            current_lr = optimizer.param_groups[0]['lr']
+
+            avg_loss = running_loss / log_interval
+            avg_content = running_content / log_interval
+            avg_style = running_style / log_interval
+
+            scheduler.step(avg_loss)
+
+            log_msg = (f"Iteration {current_iter}/{num_iterations}"
+                      f" | Loss: {avg_loss:.4f}"
+                      f" [C: {avg_content:.4f}, S: {avg_style:.4f}]"
+                      f" | LR: {current_lr:.6f}"
+                      f" | Time: {iteration_time:.1f}s")
+            logger.info(log_msg)
+
+            # Update stats
+            stats['total_loss'].append(avg_loss)
+            stats['content_loss'].append(avg_content)
+            stats['style_loss'].append(avg_style)
+            stats['learning_rates'].append(current_lr)
+            stats['times'].append(iteration_time)
+
+            # Save checkpoint
+            save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                stats=stats,
+                save_dir=save_dir,
+                training_prefix=training_prefix,
+                iteration=current_iter,
+            )
+
+            save_training_stats(stats, stats_file)
+            iteration_start_time = time.time()
+            running_loss = running_content = running_style = 0.0
+
+        # Generate sample images
+        monitor.generate_sample(
+            model=model,
+            device=device,
+            iteration=current_iter
+        )
 
         should_stop, reason = should_stop_training(stats)
         if should_stop:
             print(f"Early stopping triggered: {reason}")
-            break
+            return model
+
+        current_iter += 1
 
     # Save final stats
     stats['end_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     save_training_stats(stats, stats_file)
-    logger.info(f"Training statistics saved to {stats_file}")
-    logger.info(f"Training completed. Final LR: {optimizer.param_groups[0]['lr']}")
+    logger.info("Training completed")
+    logger.info(f"Final learning rate: {optimizer.param_groups[0]['lr']}")
 
     return model
+
+
+def save_checkpoint(model, optimizer, scheduler, stats, save_dir, training_prefix, iteration):
+    """Save a checkpoint of the model and training state."""
+    checkpoint_path = os.path.join(save_dir, f'{training_prefix}_checkpoint_iter.pth')
+
+    checkpoint = {
+        'iteration': iteration,
+        'decoder': model.decoder.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'stats': stats
+    }
+
+    torch.save(checkpoint, checkpoint_path)
 
 class TrainingMonitor:
     def __init__(
@@ -352,36 +334,32 @@ class TrainingMonitor:
         self.prefix = prefix
         self.interval_seconds = interval_minutes * 60
         self.last_sample_time = 0
-        self.last_epoch = 0
         os.makedirs(self.save_dir, exist_ok=True)
 
-    def should_generate_sample(self, epoch, iter) -> bool:
+    def should_generate_sample(self, iteration) -> bool:
         """Check if enough time has passed to generate a new sample"""
         current_time = time.time()
-        if current_time - self.last_sample_time >= self.interval_seconds or iter % 500 == 0 or epoch > self.last_epoch:
+        if current_time - self.last_sample_time >= self.interval_seconds or iteration % 500 == 0:
             self.last_sample_time = current_time
-            self.last_epoch = epoch
             return True
         return False
 
-    def generate_sample(self, model, device, epoch: int, current_iteration: int):
+    def generate_sample(self, model, device, iteration: int):
         """Generate and save a sample style transfer"""
-        if not self.should_generate_sample(epoch, current_iteration):
+        if not self.should_generate_sample(iteration):
             return
 
-        # Generate filename with timestamp and iteration
         timestamp = datetime.now().strftime('%H%M')
-        filename = f'{self.prefix}_sample_{timestamp}_iter_{epoch:02d}_{current_iteration:04d}.jpg'
+        filename = f'{self.prefix}_sample_{timestamp}_iter_{iteration:06d}.jpg'
         save_path = os.path.join(self.save_dir, filename)
 
-        # Run transfer_style function
         transfer_style(
             model=model,
             content_path=self.content_path,
             style_path=self.style_path,
             device=device,
             output_path=save_path,
-            show_plot=False  # Don't show plots during training
+            show_plot=False
         )
 
         print(f"Generated progress sample: {filename}")
