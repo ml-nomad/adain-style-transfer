@@ -1,5 +1,7 @@
+import torch
 import torch.nn as nn
-from torchvision.models import vgg19, VGG19_Weights
+from torchvision.models import vgg19
+import os
 
 
 def replace_padding(model):
@@ -50,9 +52,18 @@ def replace_padding(model):
                         break
 
 class VGGEncoder(nn.Module):
-    def __init__(self):
+    def __init__(self, vgg_weights_path='model/vgg19_norm_weights.pth'):
         super().__init__()
-        vgg = vgg19(weights=VGG19_Weights.DEFAULT).features
+        # Create VGG19 architecture without pre-trained weights
+        vgg = vgg19(weights=None).features
+
+        # Load normalized weights
+        if os.path.exists(vgg_weights_path):
+            state_dict = torch.load(vgg_weights_path, map_location='cpu')
+            vgg.load_state_dict(state_dict)
+        else:
+            raise FileNotFoundError(f"VGG19 normalized weights not found at {vgg_weights_path}")
+
         replace_padding(vgg)
 
         # slices are adjusted because of the reflection padding added
