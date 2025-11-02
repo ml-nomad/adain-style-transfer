@@ -25,6 +25,10 @@ def parse_args():
                         help='content images directory (default: training_data/content)')
     parser.add_argument('--style-dir', type=str, default='training_data/style',
                         help='style images directory (default: training_data/style)')
+    parser.add_argument('--scheduler-step-interval', type=int, default=500,
+                        help='step scheduler every N batches (default: 500)')
+    parser.add_argument('--rolling-window-size', type=int, default=3000,
+                        help='rolling average window size in batches (default: 3000)')
 
     return parser.parse_args()
 
@@ -47,7 +51,9 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         base_lr=args.base_lr,
         style_loss_coeff=args.style_loss_coeff,
-        log_interval=100
+        log_interval=100,
+        scheduler_step_interval=args.scheduler_step_interval,
+        rolling_window_size=args.rolling_window_size
     )
 
     complete_model_path = os.path.join(args.checkpoints_dir, f'{training_prefix}_complete_adain_model.pth')

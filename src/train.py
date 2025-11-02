@@ -122,7 +122,9 @@ def train_model(
         batch_size,
         base_lr,
         style_loss_coeff,
-        log_interval
+        log_interval,
+        scheduler_step_interval=500,  # Step scheduler every N batches
+        rolling_window_size=3000      # Rolling average window size
 ):
     device = get_device()
 
@@ -140,6 +142,7 @@ def train_model(
     style_file_num = count_jpegs(style_dir)
     logger.info(f"Content images: {content_file_num}, Style images: {style_file_num}")
     logger.info(f"Initial learning rate: {base_lr}")
+    logger.info(f"Scheduler: step every {scheduler_step_interval} batches, rolling average window: {rolling_window_size} batches")
 
     # Training monitor setup
     monitor = TrainingMonitor(
@@ -160,9 +163,13 @@ def train_model(
         mode='min',
         factor=0.8,
         patience=3,
-        min_lr=1e-5,
+        min_lr=1e-6,
         cooldown=1
     )
+
+    # Rolling average tracker for batch losses
+    rolling_losses = []
+    global_batch_count = 0
 
     # Training stats setup
     stats = {
@@ -204,6 +211,23 @@ def train_model(
             running_content += content_loss.item()
             running_style += style_loss.item()
 
+            # Track loss for rolling average
+            rolling_losses.append(total_loss.item())
+            if len(rolling_losses) > rolling_window_size:
+                rolling_losses.pop(0)
+
+            global_batch_count += 1
+
+            # Step scheduler based on rolling average
+            if global_batch_count % scheduler_step_interval == 0 and len(rolling_losses) >= 100:
+                rolling_avg_loss = sum(rolling_losses) / len(rolling_losses)
+                prev_lr = optimizer.param_groups[0]['lr']
+                scheduler.step(rolling_avg_loss)
+                new_lr = optimizer.param_groups[0]['lr']
+
+                if new_lr != prev_lr:
+                    logger.info(f"Scheduler stepped at batch {global_batch_count}: LR {prev_lr:.6f} -> {new_lr:.6f} (rolling avg loss: {rolling_avg_loss:.4f})")
+
             # Log progress
             if batch_idx % log_interval == 0:
                 avg_loss = running_loss / (batch_idx + 1)
@@ -228,8 +252,6 @@ def train_model(
         avg_style = running_style / len(train_loader)
         current_lr = optimizer.param_groups[0]['lr']
 
-        scheduler.step(avg_loss)
-
         # Save checkpoint
         checkpoint_path = os.path.join(save_dir, f'{training_prefix}_checkpoint_epoch{epoch + 1}.pth')
         torch.save({
@@ -241,7 +263,9 @@ def train_model(
             'loss': avg_loss,
             'content_loss': avg_content,
             'style_loss': avg_style,
-            'stats': stats  # Save current training stats
+            'stats': stats,  # Save current training stats
+            'rolling_losses': rolling_losses,
+            'global_batch_count': global_batch_count
         }, checkpoint_path)
         logger.info(f"Saved checkpoint to {checkpoint_path}")
 
