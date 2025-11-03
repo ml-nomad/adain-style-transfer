@@ -20,7 +20,7 @@ class Decoder(nn.Module):
             nn.ReLU(inplace=True),
 
             # Upsample 1 - Corresponding to VGG maxpool3
-            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
 
             # Block 3 - Corresponding to VGG conv3_4, conv3_3, conv3_2, conv3_1
             nn.ReflectionPad2d(1),
@@ -37,7 +37,7 @@ class Decoder(nn.Module):
             nn.ReLU(inplace=True),
 
             # Upsample 2 - Corresponding to VGG maxpool2
-            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
 
             # Block 2 - Corresponding to VGG conv2_2, conv2_1
             nn.ReflectionPad2d(1),
@@ -47,8 +47,8 @@ class Decoder(nn.Module):
             nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(inplace=True),
 
-            # Upsample 2 - Corresponding to VGG maxpool2
-            nn.Upsample(scale_factor=2, mode='nearest'),
+            # Upsample 3 - Corresponding to VGG maxpool1
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
 
             # Block 1 - Corresponding to VGG conv1_2, conv1_1
             nn.ReflectionPad2d(1),
