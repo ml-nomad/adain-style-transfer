@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import torch
+import math
 
 from src.utils import get_device, count_jpegs
 from src.dataset import create_dataloaders
@@ -54,6 +55,30 @@ def save_training_stats(stats, stats_file):
 
     with open(stats_file, 'w') as f:
         json.dump(serializable_stats, f, indent=4)
+
+
+def get_style_coeff(start, end, current_batch, total_batches):
+    """
+    Calculate style loss coefficient using exponential decay.
+
+    Formula: coeff = start * (end/start)^(current_batch/total_batches)
+
+    Args:
+        start: Starting style loss coefficient
+        end: Ending style loss coefficient
+        current_batch: Current batch number (0-indexed)
+        total_batches: Total number of batches in training
+
+    Returns:
+        float: Current style loss coefficient
+    """
+    if start == end:
+        return start
+
+    # Exponential decay formula
+    progress = current_batch / max(total_batches - 1, 1)  # Avoid division by zero
+    decay_factor = math.pow(end / start, progress)
+    return start * decay_factor
 
 
 def should_stop_training(stats, patience=5, min_improvement=0.0001, window_size=5, lookback_windows=10):
@@ -121,7 +146,8 @@ def train_model(
         num_epochs,
         batch_size,
         base_lr,
-        style_loss_coeff,
+        style_loss_coeff_start,
+        style_loss_coeff_end,
         log_interval,
         scheduler_step_interval=500,  # Step scheduler every N batches
         rolling_window_size=3000      # Rolling average window size
@@ -129,7 +155,12 @@ def train_model(
     device = get_device()
 
     train_loader = create_dataloaders(content_dir, style_dir, batch_size)
-    loss_fn = StyleTransferLoss(style_coeff=style_loss_coeff).to(device)
+
+    # Calculate total batches for coefficient scheduling
+    total_batches = num_epochs * len(train_loader)
+
+    # Initialize loss function with starting coefficient
+    loss_fn = StyleTransferLoss(style_coeff=style_loss_coeff_start).to(device)
     model = Model().to(device)
 
     # Setup logging
@@ -137,7 +168,12 @@ def train_model(
     logger = setup_logging(save_dir, training_prefix)
 
     # Log training setup
-    logger.info(f"Starting training for {num_epochs} epochs, batch size: {batch_size}, style loss coeff: {style_loss_coeff}")
+    if style_loss_coeff_start == style_loss_coeff_end:
+        logger.info(f"Starting training for {num_epochs} epochs, batch size: {batch_size}, style loss coeff: {style_loss_coeff_start} (constant)")
+    else:
+        logger.info(f"Starting training for {num_epochs} epochs, batch size: {batch_size}")
+        logger.info(f"Style loss coefficient: {style_loss_coeff_start} → {style_loss_coeff_end} (exponential decay over {total_batches} batches)")
+
     content_file_num = count_jpegs(content_dir)
     style_file_num = count_jpegs(style_dir)
     logger.info(f"Content images: {content_file_num}, Style images: {style_file_num}")
@@ -178,6 +214,7 @@ def train_model(
         'content_loss': [],
         'style_loss': [],
         'learning_rates': [],
+        'style_coefficients': [],  # Track style coefficient changes
         'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
@@ -217,6 +254,15 @@ def train_model(
                 rolling_losses.pop(0)
 
             global_batch_count += 1
+
+            # Update style loss coefficient with exponential decay
+            current_style_coeff = get_style_coeff(
+                style_loss_coeff_start,
+                style_loss_coeff_end,
+                global_batch_count,
+                total_batches
+            )
+            loss_fn.style_coeff = current_style_coeff
 
             # Step scheduler based on rolling average
             if global_batch_count % scheduler_step_interval == 0 and len(rolling_losses) >= 100:
@@ -275,13 +321,18 @@ def train_model(
         stats['content_loss'].append(avg_content)
         stats['style_loss'].append(avg_style)
         stats['learning_rates'].append(current_lr)
+        stats['style_coefficients'].append(loss_fn.style_coeff)
 
         save_training_stats(stats, stats_file)
         logger.info(f"Training statistics saved to {stats_file}")
 
-        # Log epoch summary
-        log_msg = (f"Epoch {epoch + 1} completed in {epoch_time:.1f}s | "
-                   f"Avg Loss: {stats['total_loss'][-1]:.4f} [C: {stats['content_loss'][-1]:.4f}, S: {stats['style_loss'][-1]:.4f}, LR: {current_lr:.6f}]")
+        # Log epoch summary with style coefficient
+        if style_loss_coeff_start == style_loss_coeff_end:
+            log_msg = (f"Epoch {epoch + 1} completed in {epoch_time:.1f}s | "
+                       f"Avg Loss: {stats['total_loss'][-1]:.4f} [C: {stats['content_loss'][-1]:.4f}, S: {stats['style_loss'][-1]:.4f}, LR: {current_lr:.6f}]")
+        else:
+            log_msg = (f"Epoch {epoch + 1} completed in {epoch_time:.1f}s | "
+                       f"Avg Loss: {stats['total_loss'][-1]:.4f} [C: {stats['content_loss'][-1]:.4f}, S: {stats['style_loss'][-1]:.4f}, SC: {loss_fn.style_coeff:.4f}, LR: {current_lr:.6f}]")
         logger.info(log_msg)
 
         should_stop, reason = should_stop_training(stats)

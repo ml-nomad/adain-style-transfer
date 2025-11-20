@@ -18,7 +18,11 @@ def parse_args():
     parser.add_argument('--base-lr', type=float, default=1e-3,
                         help='base learning rate (default: 0.001)')
     parser.add_argument('--style-loss-coeff', type=float, default=1.0,
-                        help='style loss coefficient (default: 1.0)')
+                        help='style loss coefficient (default: 1.0, used if start/end not specified)')
+    parser.add_argument('--style-loss-coeff-start', type=float, default=None,
+                        help='starting style loss coefficient for exponential decay (default: None, uses --style-loss-coeff)')
+    parser.add_argument('--style-loss-coeff-end', type=float, default=None,
+                        help='ending style loss coefficient for exponential decay (default: None, uses --style-loss-coeff)')
     parser.add_argument('--checkpoints-dir', type=str, default='checkpoints',
                         help='directory to save checkpoints (default: checkpoints)')
     parser.add_argument('--content-dir', type=str, default='training_data/content',
@@ -42,6 +46,10 @@ if __name__ == "__main__":
 
     os.makedirs(args.checkpoints_dir, exist_ok=True)
 
+    # Determine style loss coefficient settings
+    style_coeff_start = args.style_loss_coeff_start if args.style_loss_coeff_start is not None else args.style_loss_coeff
+    style_coeff_end = args.style_loss_coeff_end if args.style_loss_coeff_end is not None else args.style_loss_coeff
+
     model = train_model(
         content_dir=args.content_dir,
         style_dir=args.style_dir,
@@ -50,7 +58,8 @@ if __name__ == "__main__":
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
         base_lr=args.base_lr,
-        style_loss_coeff=args.style_loss_coeff,
+        style_loss_coeff_start=style_coeff_start,
+        style_loss_coeff_end=style_coeff_end,
         log_interval=100,
         scheduler_step_interval=args.scheduler_step_interval,
         rolling_window_size=args.rolling_window_size
